@@ -973,3 +973,123 @@ Access Token = speed & efficiency (used every request).
 Refresh Token = stability & security (keeps session alive).
 
 If a refresh token is stolen → attacker can keep generating new access tokens → why refresh tokens must be stored securely and can be revoked.
+
+
+--------------------------->
+refreshAccessToken
+This endpoint issues a new access token (and refresh token) when the existing access token has expired, but the refresh token is still valid.
+
+1️⃣ Extract the incoming refresh token
+const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
+
+First, it checks for a refreshToken in cookies.
+
+If not in cookies, it checks in the request body.
+
+2.
+If no refresh token is found → throw 401 Unauthorized.
+
+Uses jwt.verify() with your REFRESH_TOKEN_SECRET to:
+
+Ensure the token is not tampered with.
+
+Extract the _id payload from it.
+
+If verification fails → it will jump to the catch block → throw 401.
+
+3.
+Finds the user based on the _id from the decoded token.
+
+If no user is found → throw 401 Invalid refresh token.
+
+4.
+Compares the incoming refresh token with the one stored in the DB.
+
+This prevents:
+
+Using an old refresh token after re-login.
+
+Using a stolen refresh token.
+
+If they don't match → throw 401.
+
+Why check if it matches the one in DB?
+
+Handling logout / re-login
+
+When a user logs out, your backend deletes/changes the refresh token in DB.
+
+If an attacker had an old refresh token from before logout, they could still send it from their cookie.
+
+Without this DB match check, that old token would still pass JWT verification and allow token refresh.
+
+The DB match invalidates old refresh tokens immediately.
+
+Preventing stolen token reuse
+
+Suppose someone steals a refresh token from a user’s device (via XSS, malware, etc.).
+
+If you didn’t store the refresh token in DB, any stolen token would keep working until it expired.
+
+By storing it and checking equality, you can invalidate a stolen token by changing it in DB (e.g., after user changes password).
+
+Multiple logins from different devices
+
+If your system issues new refresh tokens upon each login, the older tokens should stop working.
+
+DB check ensures only the most recent refresh token is valid.
+
+Rotation for better security
+
+In token rotation strategies, every refresh request returns a new refresh token and stores it in DB.
+
+If an attacker tries to reuse an old one, the DB check blocks it.
+
+✅ In short:
+Even though the incoming refresh token probably matches in most normal requests, you’re not trusting the client blindly.
+You verify against your DB to handle logout, token theft, re-login, and rotation scenarios.
+
+
+Your current /refresh-token route:
+
+router.route("/refresh-token").post(refreshAccessToken)
+
+
+is not a “secure route” in the same sense as /logout, because it does not use verifyJWT.
+
+Why it’s not behind verifyJWT
+
+The whole point of the refresh endpoint is to let users get a new access token when their old one is expired.
+
+If you required verifyJWT (which checks the access token), the request would fail whenever the access token was expired — making the refresh endpoint useless.
+
+Instead, the refresh route authenticates using the refresh token itself, which is verified inside refreshAccessToken():
+
+jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET)
+
+
+and then compared to the one in the DB.
+
+Security of the refresh route
+
+It is secure if:
+
+The refresh token is:
+
+Signed with REFRESH_TOKEN_SECRET
+
+Long-lived but stored only in HTTP-only, Secure cookies (so JS can’t read it).
+
+You compare the incoming refresh token to the DB-stored one (as you’re doing).
+
+You rotate refresh tokens (issue a new one every refresh) and invalidate old ones.
+
+You use HTTPS so the token isn’t exposed in transit.
+
+💡 Summary
+
+/refresh-token is intentionally public (no verifyJWT) but still protected by refresh token verification.
+
+It’s “secure” in that only someone with a valid refresh token from your cookies can use it.
+
+It’s different from “secure route” in the JWT-protected sense, because access tokens aren’t required here — only the refresh token.
